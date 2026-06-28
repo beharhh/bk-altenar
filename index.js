@@ -17,7 +17,19 @@ const BOOKMAKERS = [
   }
 ];
 
-function formatOutcome(selection, market) {
+function formatOutcome(selection, market, bbSelections) {
+  // Bet builder — använd BB-selektionerna
+  if (bbSelections && bbSelections.length > 0) {
+    return bbSelections.map(bb => {
+      const name = bb.name.trim().replace(/\s*-\s*$/, '');
+      const mkt = bb.market.trim();
+      if (mkt.includes('(') && mkt.includes(')')) {
+        return mkt; // Spelarnamn → bara marknad
+      }
+      return `${name} - ${mkt}`;
+    }).join(' | ');
+  }
+  // Vanlig boost
   if (market && market.includes('(') && market.includes(')')) {
     return market;
   }
@@ -37,31 +49,54 @@ async function scrapeBookmaker(page, bookmaker) {
   console.log('Väntar 25 sekunder...');
   await new Promise(r => setTimeout(r, 25000));
 
-  const boosts = await page.evaluate((selector, name) => {
+  const boosts = await page.evaluate((selector) => {
     const host = document.querySelector(selector);
     if (!host || !host.shadowRoot) return [];
     const shadow = host.shadowRoot;
     const boxes = shadow.querySelectorAll('[class*="BoostedOddsBox-"]');
-    
+
     const results = [];
     boxes.forEach(box => {
       const event = box.querySelector('[class*="BoostedOddsBoxEvent-"]')?.textContent?.trim() || '';
       const championship = box.querySelector('[class*="BoostedOddsBoxChampionship-"]')?.textContent?.trim() || '';
       const time = box.querySelector('[class*="BoostedOddsBoxTime-"]')?.textContent?.trim() || '';
-      const market = box.querySelector('[class*="BoostedOddsBoxMarket-"]')?.textContent?.trim() || '';
-      const selection = box.querySelector('[class*="BoostedOddsBoxSelection-"]')?.textContent?.trim() || '';
       const oddsBefore = box.querySelector('[class*="OddValuePreBoosted-"]')?.textContent?.trim() || '';
       const oddsAfter = box.querySelector('[class*="OddValue-"]:not([class*="PreBoosted"])')?.textContent?.trim() || '';
 
-      if (event) {
-        results.push({ event, championship, time, market, selection, oddsBefore, oddsAfter });
+      // Kolla om det är en bet builder (BBBoostedOddsContainer)
+      const bbContainer = box.querySelector('[class*="BBBoostedOddsContainer-"]');
+      if (bbContainer) {
+        // Bet builder — plocka ut alla BB-val
+        const bbItems = bbContainer.querySelectorAll('[class*="BBBoostedOddInfo-"]');
+        const bbSelections = [];
+        bbItems.forEach(item => {
+          const name = item.querySelector('[class*="BBBoostedOddName-"]')?.textContent?.trim() || '';
+          const market = item.querySelector('[class*="BBBoostedMarketName-"]')?.textContent?.trim() || '';
+          if (name || market) bbSelections.push({ name, market });
+        });
+        if (event) {
+          results.push({ event, championship, time, market: '', selection: '', oddsBefore, oddsAfter, bbSelections });
+        }
+      } else {
+        // Vanlig boost
+        const market = box.querySelector('[class*="BoostedOddsBoxMarket-"]')?.textContent?.trim() || '';
+        const selection = box.querySelector('[class*="BoostedOddsBoxSelection-"]')?.textContent?.trim() || '';
+        if (event) {
+          results.push({ event, championship, time, market, selection, oddsBefore, oddsAfter, bbSelections: [] });
+        }
       }
     });
     return results;
-  }, bookmaker.hostSelector, bookmaker.name);
+  }, bookmaker.hostSelector);
 
   console.log(`${bookmaker.name}: Hittade ${boosts.length} boostar`);
-  boosts.forEach(b => console.log(`  ${b.event} | ${b.selection} | ${b.market} | ${b.oddsBefore} → ${b.oddsAfter}`));
+  boosts.forEach(b => {
+    if (b.bbSelections && b.bbSelections.length > 0) {
+      console.log(`  BB: ${b.event} | ${b.bbSelections.map(s => s.name + ' ' + s.market).join(' | ')} | ${b.oddsBefore} → ${b.oddsAfter}`);
+    } else {
+      console.log(`  ${b.event} | ${b.selection} | ${b.market} | ${b.oddsBefore} → ${b.oddsAfter}`);
+    }
+  });
 
   return boosts.map(b => ({ ...b, bookmaker: bookmaker.name }));
 }
@@ -132,13 +167,12 @@ async function writeToSheet(boosts) {
   const token = await getGoogleToken();
   const existing = await getSheetRows(token);
   const now = new Date();
-  
+
   const scraperBrands = new Set(['betmgm','expekt','leovegas','gogo','luckysports','happy','flax','ettkrysstva','ninja','quickcasino']);
   const puppeteerBrands = new Set(['ninja','quickcasino']);
   const manualRows = existing.filter(row => !scraperBrands.has(row[0]));
   const scraperRows = existing.filter(row => scraperBrands.has(row[0]));
-  
-  // Rensa alltid ninja/quickcasino, behåll bara giltiga från andra scrapers
+
   const validScraperRows = scraperRows.filter(row => {
     if (puppeteerBrands.has(row[0])) return false;
     const stop = parseStop(row[6]);
@@ -152,7 +186,7 @@ async function writeToSheet(boosts) {
       x: b.bookmaker,
       enable: 'TRUE',
       match: b.event.replace(' vs. ', ' - '),
-      outcome: formatOutcome(b.selection, b.market),
+      outcome: formatOutcome(b.selection, b.market, b.bbSelections),
       old: parseFloat(b.oddsBefore) || 0,
       new: parseFloat(b.oddsAfter) || 0,
       stop: formatStop(b.time),
