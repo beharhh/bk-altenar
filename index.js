@@ -17,6 +17,22 @@ const BOOKMAKERS = [
   }
 ];
 
+function formatOutcome(selection, market) {
+  // Om market innehåller spelarnamn (parenteser = landsförkortning) → bara market
+  if (market && market.includes('(') && market.includes(')')) {
+    return market;
+  }
+  // Om selection är Ja/Nej → Ja/Nej - market
+  if (selection === 'Ja' || selection === 'Nej') {
+    return `${selection} - ${market}`;
+  }
+  // Annars → selection - market
+  if (selection && market) {
+    return `${selection} - ${market}`;
+  }
+  return selection || market || '';
+}
+
 async function scrapeBookmaker(page, bookmaker) {
   console.log(`\nNavigerar till ${bookmaker.name}...`);
   await page.goto(bookmaker.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -26,10 +42,7 @@ async function scrapeBookmaker(page, bookmaker) {
 
   const boosts = await page.evaluate((selector, name) => {
     const host = document.querySelector(selector);
-    if (!host || !host.shadowRoot) {
-      console.log('Ingen shadowRoot hittad för ' + name);
-      return [];
-    }
+    if (!host || !host.shadowRoot) return [];
     const shadow = host.shadowRoot;
     const boxes = shadow.querySelectorAll('[class*="BoostedOddsBox-"]');
     
@@ -51,14 +64,14 @@ async function scrapeBookmaker(page, bookmaker) {
   }, bookmaker.hostSelector, bookmaker.name);
 
   console.log(`${bookmaker.name}: Hittade ${boosts.length} boostar`);
-  boosts.forEach(b => console.log(`  ${b.event} | ${b.market} | ${b.selection} | ${b.oddsBefore} → ${b.oddsAfter}`));
+  boosts.forEach(b => console.log(`  ${b.event} | ${b.selection} | ${b.market} | ${b.oddsBefore} → ${b.oddsAfter}`));
 
   return boosts.map(b => ({ ...b, bookmaker: bookmaker.name }));
 }
 
 async function scrapeAll() {
   const browser = await puppeteer.launch({
-    headless: true,
+    headless: false,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -138,8 +151,8 @@ async function writeToSheet(boosts) {
     .map(b => ({
       x: b.bookmaker,
       enable: 'TRUE',
-      match: b.event,
-      outcome: `${b.selection} ${b.market}`.trim(),
+      match: b.event.replace(' vs. ', ' - '),
+      outcome: formatOutcome(b.selection, b.market),
       old: parseFloat(b.oddsBefore) || 0,
       new: parseFloat(b.oddsAfter) || 0,
       stop: formatStop(b.time),
