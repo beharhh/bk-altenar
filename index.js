@@ -3,9 +3,60 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
 
 const SHEET_ID = '1WkBYGnUO4Iq1wi15bpPm0IduzRadyHA51TVLTKLA-nI';
-const BOOST_URL = 'https://www.ninjacasino.se/betting';
 
-async function scrapeNinjaBoosts() {
+const BOOKMAKERS = [
+  {
+    name: 'ninja',
+    url: 'https://www.ninjacasino.se/betting',
+    hostSelector: '#altenarsportsbook div'
+  },
+  {
+    name: 'quickcasino',
+    url: 'https://www.quickcasino.se/sv/sport',
+    hostSelector: '#STB_SPORTSBOOK div'
+  }
+];
+
+async function scrapeBookmaker(page, bookmaker) {
+  console.log(`\nNavigerar till ${bookmaker.name}...`);
+  await page.goto(bookmaker.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+  console.log('Väntar 25 sekunder...');
+  await new Promise(r => setTimeout(r, 25000));
+
+  const boosts = await page.evaluate((selector, name) => {
+    const host = document.querySelector(selector);
+    if (!host || !host.shadowRoot) {
+      console.log('Ingen shadowRoot hittad för ' + name);
+      return [];
+    }
+    const shadow = host.shadowRoot;
+    const boxes = shadow.querySelectorAll('[class*="BoostedOddsBox-"]');
+    
+    const results = [];
+    boxes.forEach(box => {
+      const event = box.querySelector('[class*="BoostedOddsBoxEvent-"]')?.textContent?.trim() || '';
+      const championship = box.querySelector('[class*="BoostedOddsBoxChampionship-"]')?.textContent?.trim() || '';
+      const time = box.querySelector('[class*="BoostedOddsBoxTime-"]')?.textContent?.trim() || '';
+      const market = box.querySelector('[class*="BoostedOddsBoxMarket-"]')?.textContent?.trim() || '';
+      const selection = box.querySelector('[class*="BoostedOddsBoxSelection-"]')?.textContent?.trim() || '';
+      const oddsBefore = box.querySelector('[class*="OddValuePreBoosted-"]')?.textContent?.trim() || '';
+      const oddsAfter = box.querySelector('[class*="OddValue-"]:not([class*="PreBoosted"])')?.textContent?.trim() || '';
+
+      if (event) {
+        results.push({ event, championship, time, market, selection, oddsBefore, oddsAfter });
+      }
+    });
+    return results;
+  }, bookmaker.hostSelector, bookmaker.name);
+
+  console.log(`${bookmaker.name}: Hittade ${boosts.length} boostar`);
+  boosts.forEach(b => console.log(`  ${b.event} | ${b.market} | ${b.selection} | ${b.oddsBefore} → ${b.oddsAfter}`));
+
+  return boosts.map(b => ({ ...b, bookmaker: bookmaker.name }));
+}
+
+async function scrapeAll() {
   const browser = await puppeteer.launch({
     headless: true,
     args: [
@@ -18,56 +69,26 @@ async function scrapeNinjaBoosts() {
     ]
   });
 
+  const allBoosts = [];
+
   try {
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
     await page.setViewport({ width: 1920, height: 1080 });
-    
-    console.log('Navigerar till Ninja Casino...');
-    await page.goto(BOOST_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    console.log('Väntar 25 sekunder...');
-    await new Promise(r => setTimeout(r, 25000));
+    for (const bookmaker of BOOKMAKERS) {
+      try {
+        const boosts = await scrapeBookmaker(page, bookmaker);
+        allBoosts.push(...boosts);
+      } catch (err) {
+        console.error(`Fel för ${bookmaker.name}:`, err.message);
+      }
+    }
 
-    const pageContent = await page.content();
-    console.log('SIDINNEHÅLL:', pageContent.substring(0, 1000));
-
-    const debug = await page.evaluate(() => {
-      const host = document.querySelector('#altenarsportsbook div');
-      if (!host) return 'INGEN #altenarsportsbook div hittad';
-      if (!host.shadowRoot) return 'Ingen shadowRoot';
-      return 'shadowRoot finns! Längd: ' + host.shadowRoot.innerHTML.length;
-    });
-    console.log('DEBUG:', debug);
-
-    const boosts = await page.evaluate(() => {
-      const host = document.querySelector('#altenarsportsbook div');
-      if (!host || !host.shadowRoot) return [];
-      const shadow = host.shadowRoot;
-      const boxes = shadow.querySelectorAll('[class*="BoostedOddsBox-"]');
-      
-      const results = [];
-      boxes.forEach(box => {
-        const event = box.querySelector('[class*="BoostedOddsBoxEvent-"]')?.textContent?.trim() || '';
-        const championship = box.querySelector('[class*="BoostedOddsBoxChampionship-"]')?.textContent?.trim() || '';
-        const time = box.querySelector('[class*="BoostedOddsBoxTime-"]')?.textContent?.trim() || '';
-        const market = box.querySelector('[class*="BoostedOddsBoxMarket-"]')?.textContent?.trim() || '';
-        const selection = box.querySelector('[class*="BoostedOddsBoxSelection-"]')?.textContent?.trim() || '';
-        const oddsBefore = box.querySelector('[class*="OddValuePreBoosted-"]')?.textContent?.trim() || '';
-        const oddsAfter = box.querySelector('[class*="OddValue-"]:not([class*="PreBoosted"])')?.textContent?.trim() || '';
-
-        if (event) {
-          results.push({ event, championship, time, market, selection, oddsBefore, oddsAfter });
-        }
-      });
-      return results;
-    });
-
-    console.log(`Hittade ${boosts.length} boostar`);
-    boosts.forEach(b => console.log(`  ${b.event} | ${b.market} | ${b.selection} | ${b.oddsBefore} → ${b.oddsAfter}`));
-
-    if (boosts.length > 0) {
-      await writeToSheet(boosts);
+    if (allBoosts.length > 0) {
+      await writeToSheet(allBoosts);
+    } else {
+      console.log('Inga boostar hittades totalt.');
     }
 
   } catch (err) {
@@ -102,7 +123,7 @@ async function writeToSheet(boosts) {
   const existing = await getSheetRows(token);
   const now = new Date();
   
-  const scraperBrands = new Set(['betmgm','expekt','leovegas','gogo','luckysports','happy','flax','ettkrysstva','ninja']);
+  const scraperBrands = new Set(['betmgm','expekt','leovegas','gogo','luckysports','happy','flax','ettkrysstva','ninja','quickcasino']);
   const manualRows = existing.filter(row => !scraperBrands.has(row[0]));
   const scraperRows = existing.filter(row => scraperBrands.has(row[0]));
   
@@ -115,7 +136,7 @@ async function writeToSheet(boosts) {
 
   const newRows = boosts
     .map(b => ({
-      x: 'ninja',
+      x: b.bookmaker,
       enable: 'TRUE',
       match: b.event,
       outcome: `${b.selection} ${b.market}`.trim(),
@@ -127,7 +148,7 @@ async function writeToSheet(boosts) {
     }))
     .filter(b => !existingKeys.has(`${b.x}|${b.match}|${b.outcome}`));
 
-  console.log(`${newRows.length} nya boostar att lägga till`);
+  console.log(`\n${newRows.length} nya boostar att lägga till`);
 
   const allScraperRows = [
     ...validScraperRows,
@@ -212,4 +233,4 @@ async function getGoogleToken() {
   return tokenData.access_token;
 }
 
-scrapeNinjaBoosts();
+scrapeAll();
