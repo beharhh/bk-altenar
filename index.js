@@ -1,4 +1,4 @@
-﻿const puppeteer = require('puppeteer-extra');
+const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
 
@@ -8,18 +8,34 @@ const BOOST_URL = 'https://www.ninjacasino.se/betting';
 async function scrapeNinjaBoosts() {
   const browser = await puppeteer.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-web-security',
+      '--disable-features=IsolateOrigins,site-per-process',
+      '--window-size=1920,1080'
+    ]
   });
 
   try {
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+    await page.setViewport({ width: 1920, height: 1080 });
     
     console.log('Navigerar till Ninja Casino...');
     await page.goto(BOOST_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    console.log('Väntar 15 sekunder...');
-    await new Promise(r => setTimeout(r, 15000));
+    console.log('Väntar 25 sekunder...');
+    await new Promise(r => setTimeout(r, 25000));
+
+    const debug = await page.evaluate(() => {
+      const host = document.querySelector('#altenarsportsbook div');
+      if (!host) return 'INGEN #altenarsportsbook div hittad';
+      if (!host.shadowRoot) return 'Ingen shadowRoot';
+      return 'shadowRoot finns! Längd: ' + host.shadowRoot.innerHTML.length;
+    });
+    console.log('DEBUG:', debug);
 
     const boosts = await page.evaluate(() => {
       const host = document.querySelector('#altenarsportsbook div');
@@ -59,7 +75,6 @@ async function scrapeNinjaBoosts() {
 }
 
 function formatStop(timeStr) {
-  // timeStr är t.ex. "29/06 • 19:00"
   try {
     const clean = timeStr.replace('•', '').trim();
     const [datePart, timePart] = clean.split(/\s+/);
@@ -81,7 +96,6 @@ function detectSport(championship) {
 
 async function writeToSheet(boosts) {
   const token = await getGoogleToken();
-  
   const existing = await getSheetRows(token);
   const now = new Date();
   
@@ -168,21 +182,21 @@ async function getGoogleToken() {
   const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
   const privateKey = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
 
-  const header = btoa(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
-  const payload = btoa(JSON.stringify({
+  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({
     iss: clientEmail,
     scope: 'https://www.googleapis.com/auth/spreadsheets',
     aud: 'https://oauth2.googleapis.com/token',
     exp: now + 3600,
     iat: now
-  })).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
+  })).toString('base64url');
 
   const signingInput = `${header}.${payload}`;
 
   const crypto = require('crypto');
   const sign = crypto.createSign('RSA-SHA256');
   sign.update(signingInput);
-  const signature = sign.sign(privateKey, 'base64').replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
+  const signature = sign.sign(privateKey, 'base64url');
 
   const jwt = `${signingInput}.${signature}`;
 
