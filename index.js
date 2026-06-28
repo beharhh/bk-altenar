@@ -27,7 +27,10 @@ async function scrapeNinjaBoosts() {
     await page.goto(BOOST_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     console.log('Väntar 25 sekunder...');
-    await new Promise(r => setTimeout(r, 45000));
+    await new Promise(r => setTimeout(r, 25000));
+
+    const pageContent = await page.content();
+    console.log('SIDINNEHÅLL:', pageContent.substring(0, 1000));
 
     const debug = await page.evaluate(() => {
       const host = document.querySelector('#altenarsportsbook div');
