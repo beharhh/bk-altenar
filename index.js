@@ -18,15 +18,12 @@ const BOOKMAKERS = [
 ];
 
 function formatOutcome(selection, market) {
-  // Om market innehåller spelarnamn (parenteser = landsförkortning) → bara market
   if (market && market.includes('(') && market.includes(')')) {
     return market;
   }
-  // Om selection är Ja/Nej → Ja/Nej - market
   if (selection === 'Ja' || selection === 'Nej') {
     return `${selection} - ${market}`;
   }
-  // Annars → selection - market
   if (selection && market) {
     return `${selection} - ${market}`;
   }
@@ -137,12 +134,13 @@ async function writeToSheet(boosts) {
   const now = new Date();
   
   const scraperBrands = new Set(['betmgm','expekt','leovegas','gogo','luckysports','happy','flax','ettkrysstva','ninja','quickcasino']);
+  const puppeteerBrands = new Set(['ninja','quickcasino']);
   const manualRows = existing.filter(row => !scraperBrands.has(row[0]));
   const scraperRows = existing.filter(row => scraperBrands.has(row[0]));
   
-  // Ta bort alla gamla ninja/quickcasino-rader och ersätt med nya
-  const puppeteerBrands = new Set(["ninja","quickcasino"]);
+  // Rensa alltid ninja/quickcasino, behåll bara giltiga från andra scrapers
   const validScraperRows = scraperRows.filter(row => {
+    if (puppeteerBrands.has(row[0])) return false;
     const stop = parseStop(row[6]);
     return stop && stop > now;
   });
