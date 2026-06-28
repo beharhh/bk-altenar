@@ -140,6 +140,8 @@ async function writeToSheet(boosts) {
   const manualRows = existing.filter(row => !scraperBrands.has(row[0]));
   const scraperRows = existing.filter(row => scraperBrands.has(row[0]));
   
+  // Ta bort alla gamla ninja/quickcasino-rader och ersätt med nya
+  const puppeteerBrands = new Set(["ninja","quickcasino"]);
   const validScraperRows = scraperRows.filter(row => {
     const stop = parseStop(row[6]);
     return stop && stop > now;
